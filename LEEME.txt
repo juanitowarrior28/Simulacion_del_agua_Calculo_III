@@ -1,0 +1,20 @@
+PROYECTO CÁLCULO III - SIMULACIÓN DE AGUA
+
+Ana Sofia Valencia - Carlos Diaz - Diego Franco Leon - Juan Jose Guerrero
+
+ARCHIVOS:
+- index.html: simulación completa con Three.js y shaders GLSL.
+
+CÓMO EJECUTAR:
+1. Extraer el ZIP y abrir la carpeta en Visual Studio Code.
+2. Instalar la extensión Live Server (si no está instalada).
+3. Clic derecho sobre index.html -> Open with Live Server.
+4. Se requiere internet para cargar Three.js desde jsDelivr.
+
+FUNCIONALIDADES:
+- Tres ondas sinusoidales superpuestas.
+- Derivadas parciales calculadas de forma analítica en el vertex shader.
+- Vector normal e iluminación en el fragment shader.
+- Control de altura, velocidad, pausa, reinicio y cámara orbital.
+
+NOTA: Los shaders se ejecutan en la GPU, por lo que el navegador necesita WebGL.

@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cálculo III — Simulación matemática de agua</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; background:#071522; font-family: Arial, sans-serif; color:#eef7ff; }
+    #scene { width:100%; height:100%; display:block; }
+    .panel { position:absolute; top:16px; left:16px; z-index:2; background:rgba(3,18,34,.9); border:1px solid #35536d; border-radius:12px; padding:18px; width:min(350px, calc(100vw - 32px)); box-shadow:0 15px 35px #0005; }
+    h1 { font-size:17px; margin:0 0 7px; }
+    p { font-size:13px; line-height:1.45; color:#d0e2ed; margin:8px 0; }
+    label { display:block; font-size:12px; margin:13px 0 6px; }
+    input[type=range] { width:100%; accent-color:#45bfe6; }
+    button { border:1px solid #33708a; border-radius:7px; background:#123d55; color:#fff; padding:9px 12px; cursor:pointer; }
+    .buttons { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+    .footer { position:absolute; bottom:12px; right:16px; z-index:2; font-size:12px; color:#d1dfe8; background:#061625a6; padding:7px; border-radius:5px; }
+    .status { color:#80eeb6; font-size:12px; }
+    #error { display:none; color:#ffaaaa; background:#401921; border:1px solid #a44; margin-top:12px; padding:10px; border-radius:6px; font-size:12px; }
+    @media (max-height: 620px) { .panel { max-height:calc(100vh - 28px); overflow:auto; } }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="scene" aria-label="Simulación 3D animada de ondas de agua"></div>
+  <section class="panel">
+    <h1>Proyecto de Cálculo III</h1>
+    <p><strong>Simulación de superficie de agua</strong> mediante ondas sinusoidales, derivadas parciales, gradiente, normal e iluminación.</p>
+    <p><strong>Modelo:</strong> h(x,y,t) = Σ Aᵢ sen(kᵢ(dᵢ·r) − ωᵢt + φᵢ)</p>
+    <p><strong>Derivadas:</strong> hₓ = ∂h/∂x, hᵧ = ∂h/∂y</p>
+    <p><strong>Normal:</strong> N = normalizar(−hₓ, −hᵧ, 1)</p>
+    <label for="amplitude">Altura de las olas: <output id="amplitudeValue">1.00</output>×</label>
+    <input id="amplitude" type="range" min="0" max="2" step="0.05" value="1">
+    <label for="speed">Velocidad de la animación: <output id="speedValue">1.00</output>×</label>
+    <input id="speed" type="range" min="0" max="3" step="0.1" value="1">
+    <div class="buttons"><button id="toggle">Pausar</button><button id="reset">Restablecer</button></div>
+    <p class="status" id="status">● Iniciando simulación…</p>
+    <div id="error"></div>
+  </section>
+  <div class="footer">Arrastrar: girar · Rueda: zoom · Botón derecho: desplazar</div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // 1. Escena, cámara y controles. El eje Z apunta hacia arriba.
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x071522);
+    scene.fog = new THREE.Fog(0x071522, 13, 29);
+    const camera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, .1, 100);
+    camera.up.set(0, 0, 1);
+    camera.position.set(7.4, -9.4, 7.6);
+    const renderer = new THREE.WebGLRenderer({antialias:true});
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    document.getElementById('scene').appendChild(renderer.domElement);
+    const orbit = new OrbitControls(camera, renderer.domElement);
+    orbit.target.set(0, 0, 0);
+    orbit.enableDamping = true;
+    orbit.maxPolarAngle = Math.PI * .49;
+    orbit.minDistance = 4;
+    orbit.maxDistance = 24;
+    orbit.update();
+
+    // 2. Geometría: una malla con suficientes vértices para formar ondas.
+    const geometry = new THREE.PlaneGeometry(12, 12, 220, 220);
+
+    // 3. Vertex shader (GLSL): altura, superposición, derivadas parciales y normal.
+    const vertexShader = `
+      uniform float uTime;
+      uniform float uAmplitude;
+      varying vec3 vNormal;
+      varying vec3 vWorldPosition;
+      varying float vHeight;
+      void main() {
+        vec2 r = position.xy;
+        vec2 d1 = normalize(vec2(1.0, 0.25));
+        vec2 d2 = normalize(vec2(-0.35, 1.0));
+        vec2 d3 = normalize(vec2(0.75, -0.65));
+        float a1 = 0.22 * uAmplitude, a2 = 0.13 * uAmplitude, a3 = 0.08 * uAmplitude;
+        float k1 = 1.35, k2 = 2.10, k3 = 2.80;
+        float t1 = k1 * dot(d1,r) - 1.10*uTime;
+        float t2 = k2 * dot(d2,r) - 1.55*uTime + 1.2;
+        float t3 = k3 * dot(d3,r) - 1.90*uTime + 2.1;
+
+        // h(x,y,t) = A1 sen(t1) + A2 sen(t2) + A3 sen(t3).
+        float h = a1*sin(t1) + a2*sin(t2) + a3*sin(t3);
+
+        // Derivadas analíticas de h con respecto a x y a y.
+        float hx = a1*k1*d1.x*cos(t1) + a2*k2*d2.x*cos(t2) + a3*k3*d3.x*cos(t3);
+        float hy = a1*k1*d1.y*cos(t1) + a2*k2*d2.y*cos(t2) + a3*k3*d3.y*cos(t3);
+
+        // La normal geométrica a la superficie z = h(x,y,t).
+        vec3 n = normalize(vec3(-hx,-hy,1.0));
+        vec4 worldP = modelMatrix * vec4(position.xy,h,1.0);
+        vWorldPosition = worldP.xyz;
+        vNormal = normalize(mat3(modelMatrix)*n);
+        vHeight = h;
+        gl_Position = projectionMatrix * viewMatrix * worldP;
+      }
+    `;
+
+    // 4. Fragment shader (GLSL): producto punto e iluminación del agua.
+    const fragmentShader = `
+      uniform vec3 uLightDirection;
+      uniform vec3 uCameraPosition;
+      varying vec3 vNormal;
+      varying vec3 vWorldPosition;
+      varying float vHeight;
+      void main() {
+        vec3 N = normalize(vNormal);
+        vec3 L = normalize(uLightDirection);
+        vec3 V = normalize(uCameraPosition-vWorldPosition);
+        float diffuse = max(dot(N,L),0.0);
+        vec3 R = reflect(-L,N);
+        float specular = pow(max(dot(R,V),0.0),72.0);
+        vec3 base = mix(vec3(.015,.13,.25),vec3(.08,.49,.68),smoothstep(-.45,.45,vHeight));
+        vec3 col = base*(.35+.86*diffuse)+vec3(.7,.88,1.0)*specular*.75;
+        gl_FragColor = vec4(col,1.0);
+      }
+    `;
+
+    const material = new THREE.ShaderMaterial({
+      vertexShader, fragmentShader,
+      uniforms: {
+        uTime:{value:0},
+        uAmplitude:{value:1},
+        uLightDirection:{value:new THREE.Vector3(-.5,-.4,1).normalize()},
+        uCameraPosition:{value:camera.position}
+      },
+      side:THREE.DoubleSide
+    });
+    scene.add(new THREE.Mesh(geometry,material));
+
+    // 5. Interacción y animación.
+    let running = true;
+    let simulationTime = 0;
+    const clock = new THREE.Clock();
+    const speed = document.getElementById('speed');
+    const amplitude = document.getElementById('amplitude');
+    const toggle = document.getElementById('toggle');
+    speed.addEventListener('input', () => document.getElementById('speedValue').textContent = Number(speed.value).toFixed(2));
+    amplitude.addEventListener('input', () => {
+      material.uniforms.uAmplitude.value = Number(amplitude.value);
+      document.getElementById('amplitudeValue').textContent = Number(amplitude.value).toFixed(2);
+    });
+    toggle.addEventListener('click', () => {
+      running = !running;
+      toggle.textContent = running ? 'Pausar' : 'Reanudar';
+      document.getElementById('status').textContent = running ? '● Simulación activa' : '● Simulación pausada';
+    });
+    document.getElementById('reset').addEventListener('click', () => {
+      simulationTime = 0; speed.value = 1; amplitude.value = 1;
+      speed.dispatchEvent(new Event('input'));
+      amplitude.dispatchEvent(new Event('input'));
+      orbit.reset();
+    });
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(),.05);
+      if (running) simulationTime += dt*Number(speed.value);
+      material.uniforms.uTime.value = simulationTime;
+      material.uniforms.uCameraPosition.value.copy(camera.position);
+      orbit.update();
+      renderer.render(scene,camera);
+    }
+    document.getElementById('status').textContent = '● Simulación activa';
+    animate();
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth,window.innerHeight);
+    });
+  </script>
+</body>
+</html>
